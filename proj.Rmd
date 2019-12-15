@@ -1,0 +1,243 @@
+---
+title: "project"
+author: "Ziyu Su"
+date: "11/8/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### load data
+```{r echo=TRUE,eval=TRUE}
+data=read.csv(file='diabetes.csv',header = TRUE)
+```
+
+### preprocessing
+convert gender, frame to numeric values (gender: 0 for female, 1 for male; frame: 0 for small, 1 for medium, 2 for large):
+```{r echo=TRUE,eval=TRUE}
+a <- sub("female","0",data$gender)
+b <- sub("male","1",a)
+data$gender<-b
+a=sub('small','0',data$frame)
+b=sub('medium','1',a)
+c=sub('large','2',b)
+data$frame=c
+data[data==""]=NA
+```
+remove id,location,bp.2s,bp2d; remove rows with NA value
+```{r echo=TRUE,eval=TRUE}
+data$id=NULL
+data$location=NULL
+data$bp.2d=NULL
+data$bp.2s=NULL
+
+data=na.omit(data)
+```
+366 data points remain
+
+convert height and weight into h/w, convert waist and hip into ws/hp
+```{r echo=TRUE,eval=TRUE}
+data$h.w=data$height/data$weight
+data$ws.hp=data$waist/data$hip
+data$height=NULL
+data$weight=NULL
+data$waist=NULL
+data$hip=NULL
+```
+
+create label (0 for healthy, 1 for diabetes):
+```{r echo=TRUE,eval=TRUE}
+label=data$glyhb
+label[label<6.5]=0
+label[label>=6.5]=1
+```
+
+### data exploration
+
+```{r echo=TRUE,eval=TRUE}
+plot(data$glyhb,data$stab.glu)
+plot(data$glyhb,data$ws.hp)
+```
+
+```{r echo=TRUE,eval=TRUE}
+hist(label)
+hist(data$glyhb)
+```
+
+### t-SNE visualization
+
+```{r echo=TRUE,eval=TRUE}
+library(Rtsne)
+## Curating the database for analysis with both t‐SNE and PCA
+data0=data
+data0$glyhb=NULL
+data0$label=as.factor(label)
+## for plotting
+colors = rainbow(length(unique(data0$label)))
+names(colors) = unique(data0$label)
+## Executing the algorithm on curated data
+tsne=Rtsne(data0[,-1], dims = 2, perplexity=30, verbose=TRUE, max_iter = 500)
+exeTimeTsne=system.time(Rtsne(data0[,-1], dims = 2, perplexity=30, verbose=TRUE, max_iter = 500))
+
+## Plotting
+plot(tsne$Y, t='n', main="tsne")
+text(tsne$Y, labels=data0$label, col=colors[data0$label])
+```
+
+
+### variable selection
+"glyhb", which means Glycosolated Hemoglobin, is popularly used indicator of diabetes. Thus, we want to build a model to fit the "glyhb" value. We used step-wise regression to select variables to be used.
+```{r echo=TRUE,eval=TRUE}
+step(lm(glyhb~1, data=data), direction="both", scope=~chol+stab.glu+hdl+ratio+age+gender+frame+bp.1s+bp.1d+time.ppn+h.w+ws.hp)
+```
+
+
+| Variables    | (Intercept) |  stab.glu |    chol   |    age    |   ratio   |  time.ppn |
+| ------------ | ----------- | --------- | --------- | --------- | --------- | --------- |
+| Coefficients | 0.2767223   | 0.0276492 | 0.0043767 | 0.0150447 | 0.1239409 | 0.0005546 |
+
+
+$\hat{y}=0.2767223+0.0276492x_1+0.0043767x_2+0.0150447x_3+0.1239409x_4+0.0005546x_5$
+
+therefore, we select to use stab.glu (Stabilized Glucose), chol (Total Cholesterol), age, ratio(Cholesterol/HDL Ratio), time.ppn (Postprandial Time when Labs were Drawn)
+
+### model fitting
+
+```{r echo=TRUE,eval=TRUE}
+set.seed(100)
+index <-sort(sample(nrow(data), nrow(data)*.8))
+train_data <-data[index,]
+train_label=label[index]
+test_data <-data[-index,]
+test_label=label[-index]
+```
+
+```{r echo=TRUE,eval=TRUE}
+data0=data
+data0$hdl=NULL
+data0$age=NULL
+data0$gender=NULL
+data0$frame=NULL
+data0$bp.1s=NULL
+data0$bp.1d=NULL
+data0$h.w=NULL
+data0$ws.hp=NULL
+train_data0 <-data0[index,]
+train_label0=label[index]
+test_data0 <-data0[-index,]
+test_label0=label[-index]
+
+fit0=lm(glyhb~., data = train_data0)
+summary(fit0)
+```
+
+```{r eval=TRUE,echo=TRUE}
+a=test_data0
+test_y0=a$glyhb
+a$glyhb=NULL
+test_x0=a
+```
+
+```{r eval=TRUE,echo=TRUE}
+test_pre0=predict(fit0,test_x0,interval = 'prediction')
+
+
+test_pre0[test_pre0<6.5]=0
+test_pre0[test_pre0>=6.5]=1
+```
+
+```{r eval=TRUE,echo=TRUE}
+b=data.frame(test_pre0)
+a=sum(abs(b$fit-test_label0))
+table1=table(b$fit,test_label0)
+table1
+acc=1-a/nrow(test_data0)
+acc
+plot(fit0)
+```
+
+```{r echo=TRUE,eval=TRUE}
+fit1=lm(glyhb~.,data = train_data)
+summary(fit1)
+```
+
+```{r eval=TRUE,echo=TRUE}
+plot(fit1)
+```
+
+```{r eval=TRUE,echo=TRUE}
+a=test_data
+test_y=a$glyhb
+a$glyhb=NULL
+test_x=a
+```
+
+```{r eval=TRUE,echo=TRUE}
+test_pre=predict(fit1,test_x,interval = 'prediction')
+test_pre
+```
+```{r eval=TRUE,echo=TRUE}
+test_pre[test_pre<6.5]=0
+test_pre[test_pre>=6.5]=1
+```
+
+```{r eval=TRUE,echo=TRUE}
+b=data.frame(test_pre)
+a=sum(abs(b$fit-test_label))
+table1=table(b$fit,test_label)
+table1
+acc=1-a/nrow(test_data)
+acc
+```
+|Predict\Label|  0  |  1  |
+| ----------- | --- | --- |
+|      0      | 60  |  4  |
+| ----------- | --- | --- |
+|      1      |  2  |  8  |
+### SVM
+Prepare data2 for SVM. Add label into it and remove the glyhb.
+```{r eval=TRUE,echo=TRUE}
+data2=data # data for svm
+data2$label=factor(label)
+data2$glyhb=NULL
+set.seed(100)
+index <-sort(sample(nrow(data2), nrow(data2)*.8))
+train_data2 <-data2[index,]
+test_data2 <-data2[-index,]
+```
+
+
+```{r eval=TRUE,echo=TRUE}
+library(e1071)
+svm1=svm(label~.,data=train_data2)
+table2=table(predict(svm1,test_data2[,-13]),test_data2[,13])
+table2
+acc=sum(diag(table2))/nrow(test_data2)
+acc
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
